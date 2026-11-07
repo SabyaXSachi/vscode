@@ -34,8 +34,7 @@ import { IObservable, autorun, observableFromEvent } from '../../../../base/comm
 import { IDefaultAccountService } from '../../../../platform/defaultAccount/common/defaultAccount.js';
 import { IDefaultAccount, IEntitlementsData, IQuotaSnapshotData } from '../../../../base/common/defaultAccount.js';
 import { isInternalAccount } from '../../../../platform/assignment/common/assignment.js';
-import { IAgentHostService } from '../../../../platform/agentHost/common/agentService.js';
-import { canCompleteCopilotAccountSetup, CopilotAccountContextView, observeCopilotAccountContext } from '../../agentHost/common/copilotAccountContext.js';
+import { canCompleteCopilotAccountSetup, CopilotAccountContextView } from '../../agentHost/common/copilotAccountContext.js';
 
 export namespace ChatEntitlementContextKeys {
 
@@ -1617,7 +1616,8 @@ export class ChatEntitlementContext extends Disposable {
 
 	private readonly completedContext: IContextKey<boolean>;
 	private readonly copilotAccountReadyContext: IContextKey<boolean | undefined>;
-	private readonly copilotAccountContext: IObservable<CopilotAccountContextView>;
+	private copilotAccountContext: IObservable<CopilotAccountContextView> | undefined;
+	private readonly copilotAccountContextListener = this._register(new MutableDisposable());
 	private readonly hiddenContext: IContextKey<boolean>;
 	private readonly disabledInWorkspaceContext: IContextKey<boolean>;
 	private readonly laterContext: IContextKey<boolean>;
@@ -1641,11 +1641,9 @@ export class ChatEntitlementContext extends Disposable {
 		@ILogService private readonly logService: ILogService,
 		@IConfigurationService private readonly configurationService: IConfigurationService,
 		@ITelemetryService private readonly telemetryService: ITelemetryService,
-		@IAgentHostService agentHostService: IAgentHostService,
 	) {
 		super();
 
-		this.copilotAccountContext = observeCopilotAccountContext(agentHostService, this._store);
 		this.copilotAccountReadyContext = ChatEntitlementContextKeys.Setup.copilotAccountReady.bindTo(contextKeyService);
 		this.canSignUpContextKey = ChatEntitlementContextKeys.Entitlement.canSignUp.bindTo(contextKeyService);
 		this.signedOutContextKey = ChatEntitlementContextKeys.Entitlement.signedOut.bindTo(contextKeyService);
@@ -1691,10 +1689,15 @@ export class ChatEntitlementContext extends Disposable {
 		this.updateContextSync();
 
 		this.registerListeners();
-		this._register(autorun(reader => {
-			this.copilotAccountContext.read(reader);
+	}
+
+	/** Binds host readiness after early extension enablement has finished constructing. */
+	setCopilotAccountContext(context: IObservable<CopilotAccountContextView>): void {
+		this.copilotAccountContext = context;
+		this.copilotAccountContextListener.value = autorun(reader => {
+			context.read(reader);
 			void this.updateContext();
-		}));
+		});
 	}
 
 	private registerListeners(): void {
@@ -1708,7 +1711,7 @@ export class ChatEntitlementContext extends Disposable {
 	private _forceHidden = false;
 
 	private withConfiguration(state: IChatEntitlementContextState): IChatEntitlementContextState {
-		const accountContext = this.copilotAccountContext.get();
+		const accountContext = this.copilotAccountContext?.get();
 		if (accountContext !== undefined) {
 			const ready = canCompleteCopilotAccountSetup(accountContext);
 			state = { ...state, copilotAccountReady: accountContext === 'loading' || accountContext instanceof Error ? undefined : ready, completed: !!state.completed && ready };
