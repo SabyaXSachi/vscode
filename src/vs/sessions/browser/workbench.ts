@@ -9,7 +9,7 @@ import './media/workbench.css';
 import './media/phoneLayout.css';
 import { Disposable, DisposableStore, IDisposable, MutableDisposable, toDisposable } from '../../base/common/lifecycle.js';
 import { Emitter, Event, setGlobalLeakWarningThreshold } from '../../base/common/event.js';
-import { addDisposableGenericMouseDownListener, addDisposableListener, EventType, getActiveDocument, getActiveElement, getClientArea, getWindow, getWindowId, getWindows, IDimension, isAncestorUsingFlowTo, isHTMLElement, size, Dimension, runWhenWindowIdle, scheduleAtNextAnimationFrame } from '../../base/browser/dom.js';
+import { addDisposableGenericMouseDownListener, addDisposableListener, EventType, getActiveDocument, getActiveElement, getClientArea, getWindow, getWindowById, getWindowId, getWindows, IDimension, isAncestorUsingFlowTo, isHTMLElement, onDidRegisterWindow, size, Dimension, runWhenWindowIdle, scheduleAtNextAnimationFrame } from '../../base/browser/dom.js';
 import { DeferredPromise, RunOnceScheduler } from '../../base/common/async.js';
 import { isFullscreen, onDidChangeFullscreen, isChrome, isFirefox, isSafari } from '../../base/browser/browser.js';
 import { mark } from '../../base/common/performance.js';
@@ -384,8 +384,13 @@ export abstract class Workbench extends Disposable implements IAgentWorkbenchLay
 	readonly mainContainer = document.createElement('div');
 	private panelSpacing = AGENTS_FLOATING_PANEL_GAP;
 
+	private lastFocusedWindowId = mainWindow.vscodeWindowId;
+
 	get activeContainer(): HTMLElement {
-		return this.getContainerFromDocument(getActiveDocument());
+		// On macOS a panel window, such as the Agents Launcher, takes focus without the window focused before it losing
+		// focus, so that both report focus. The one focused last is then the active one.
+		const lastFocusedDocument = getWindowById(this.lastFocusedWindowId)?.window.document;
+		return this.getContainerFromDocument(lastFocusedDocument?.hasFocus() ? lastFocusedDocument : getActiveDocument());
 	}
 
 	get containers(): Iterable<HTMLElement> {
@@ -575,6 +580,10 @@ export abstract class Workbench extends Disposable implements IAgentWorkbenchLay
 		mark('code/willStartWorkbench');
 
 		this.registerErrorHandler(logService);
+
+		this._register(Event.runAndSubscribe(onDidRegisterWindow, ({ window, disposables }) => {
+			disposables.add(addDisposableListener(window, EventType.FOCUS, () => this.lastFocusedWindowId = window.vscodeWindowId));
+		}, { window: mainWindow, disposables: this._store }));
 	}
 
 	/** Called during construction so an entry-owned workbench can fix its viewport class. */
